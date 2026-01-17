@@ -68,7 +68,7 @@ def init_database():
     cursor = conn.cursor()
 
     cursor.execute(
-            '''
+            """
             CREATE TABLE IF NOT EXISTS submissions
             (
                 id
@@ -103,7 +103,7 @@ def init_database():
                 DEFAULT
                 0
             )
-            '''
+            """
             )
 
     cursor.execute(
@@ -190,27 +190,6 @@ def get_leaderboard() -> pd.DataFrame:
     if len(df) > 0:
         df.insert(0, 'Rang', range(1, len(df) + 1))
 
-    return df
-
-
-def get_team_history(team_name: str) -> pd.DataFrame:
-    """Recupere l'historique d'une equipe."""
-    conn = sqlite3.connect(DB_PATH)
-
-    df = pd.read_sql_query(
-            '''
-            SELECT ROUND(val_accuracy * 100, 2)                 as "Val (%)",
-                   ROUND(test_accuracy * 100, 2)                as "Test (%)",
-                   n_params                                     as "Params",
-                   submitted_at                                 as "Date",
-                   CASE WHEN is_best = 1 THEN 'Oui' ELSE '' END as "Meilleur"
-            FROM submissions
-            WHERE team_name = ?
-            ORDER BY submitted_at DESC LIMIT 10
-            ''', conn, params=(team_name,)
-            )
-
-    conn.close()
     return df
 
 
