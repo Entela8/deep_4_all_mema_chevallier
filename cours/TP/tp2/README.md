@@ -151,7 +151,7 @@ Questions à vous poser :
 
 ```bash
 # Générer les données
-uv run train.py
+uv run train_oracle.py
 ```
 
 ## Ressources
