@@ -24,7 +24,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 ### 2. Cloner le projet
 
 ```bash
-git clone https://github.com/votre-username/deep_4_all.git
+git clone https://github.com/blancsw/deep_4_all.git
 cd deep_4_all
 ```
 
