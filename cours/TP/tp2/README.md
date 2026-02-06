@@ -1,255 +1,387 @@
-# TP2 : Du Scalaire au Tenseur - Le Tournoi de la Guilde
-
-## Contexte Narratif
-
-Bienvenue dans la **Guilde des Aventuriers** ! Vous venez d'être recruté comme Oracle de la Guilde. Votre mission : prédire si un aventurier survivra à une quête en analysant ses caractéristiques.
-
-La Guilde possède des archives historiques de milliers de quêtes passées. À vous de construire le modèle de prédiction le plus fiable !
-
-## Objectifs Pédagogiques
-
-1. **Maîtriser PyTorch** : Réécrire un MLP en utilisant des tenseurs
-2. **Comprendre les dimensions** : Broadcasting, shapes, batching
-3. **Optimisation** : Comparer SGD vs Adam, comprendre les learning rates
-4. **Généralisation** : Découvrir l'overfitting et les techniques de régularisation
-
-## Structure du TP
-
-```
-tp2/
-├── README.md                # Ce fichier
-├── baseline_model.py        # Modèle de départ (à améliorer !)
-├── train.py                 # Script d'entraînement
-├── intro_pytorch.ipynb      # Notebook d'introduction à PyTorch
-└── data/                    # Données générées
-    ├── train.csv
-    └── val.csv
-```
-
-## Partie 1 : Introduction à PyTorch
-
-### Étape 1 : Comprendre les tenseurs
-
-Ouvrez `intro_pytorch.ipynb` et suivez les exercices sur :
-- Création de tenseurs
-- Opérations et broadcasting
-- Gradients automatiques (`autograd`)
-- MLP
-- etc
-
-## Partie 2 : Le Tournoi de Généralisation
-
-### Le Défi
-
-Vous recevez un dataset d'aventuriers avec leurs caractéristiques :
-
-| Feature | Description |
-|---------|-------------|
-| `force` | Force physique (0-100) |
-| `intelligence` | Intelligence (0-100) |
-| `agilite` | Agilité (0-100) |
-| `chance` | Facteur chance (0-100) |
-| `experience` | Années d'expérience |
-| `niveau_quete` | Difficulté de la quête (1-10) |
-| `equipement` | Qualité de l'équipement (0-100) |
-| `fatigue` | Niveau de fatigue (0-100) |
-
-**Label** : `survie` (1 = survit, 0 = échec)
-
-### Les Lois de la Survie (Archives Secrètes de la Guilde)
-
-Les Sages de la Guilde ont étudié des milliers de quêtes et ont découvert les facteurs qui déterminent la survie d'un aventurier. Ces connaissances sont transmises uniquement aux Oracles confirmés...
-
-#### Dans les Terres Connues (données d'entraînement)
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│           FORMULE DE SURVIE - TERRES CONNUES                │
-├─────────────────────────────────────────────────────────────┤
-│  Équipement ████████████████████████░░░░  25% - Crucial !   │
-│  Force      ████████████████████░░░░░░░░  25% - La puissance│
-│  Intelligence ████████████████░░░░░░░░░░  20% - La sagesse  │
-│  Expérience ████████████░░░░░░░░░░░░░░░░  15% - Le vécu     │
-│  Agilité    ████████░░░░░░░░░░░░░░░░░░░░  10% - L'esquive   │
-│  Chance     ████░░░░░░░░░░░░░░░░░░░░░░░░   5% - Le destin   │
-├─────────────────────────────────────────────────────────────┤
-│  MALUS                                                      │
-│  Fatigue    ████████████░░░░░░░░░░░░░░░░ -15% - L'épuisement│
-│  Difficulté ██████░░░░░░░░░░░░░░░░░░░░░░  -8% - Le danger   │
-└─────────────────────────────────────────────────────────────┘
-```
-
-*"Un guerrier bien équipé et puissant domine les quêtes classiques."*
-— Grimoire de l'Oracle, Chapitre III
-
-#### Dans les Terres Maudites
-
-<details>
-<summary>🔒 parchemin des vieux sage</summary>
-
-Les Terres Maudites obéissent à des lois **inversées**. La magie noire qui imprègne ces lieux change tout...
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│           FORMULE DE SURVIE - TERRES MAUDITES               │
-├─────────────────────────────────────────────────────────────┤
-│  Intelligence █████████████████████████████ 30% - CRUCIAL ! │
-│  Agilité      ████████████████████░░░░░░░░░ 20% - Vital     │
-│  Chance       ████████████████████░░░░░░░░░ 20% - Le destin │
-│  Équipement   ████████████░░░░░░░░░░░░░░░░░ 15% - Utile     │
-│  Force (<70)  ████████░░░░░░░░░░░░░░░░░░░░░ 10% - Modéré    │
-│  Expérience   ████░░░░░░░░░░░░░░░░░░░░░░░░░  5% - Peu utile │
-├─────────────────────────────────────────────────────────────┤
-│  MALUS                                                      │
-│  Fatigue      ████████░░░░░░░░░░░░░░░░░░░░ -10%             │
-│  Difficulté   ████████░░░░░░░░░░░░░░░░░░░░ -10%             │
-│  ARROGANCE    ████████████░░░░░░░░░░░░░░░░ -15% (Force >70!)│
-└─────────────────────────────────────────────────────────────┘
-```
-
-**LE PIÈGE DE L'ARROGANCE** : Les guerriers trop confiants en leur force (>70) subissent une pénalité ! Leur arrogance les rend vulnérables aux pièges magiques des Terres Maudites.
-
-*"Dans les Terres Maudites, la ruse vaut mieux que la force brute."*
-— Inscription sur une stèle oubliée
-
-**Leçon pédagogique** : Les modèles qui ont mémorisé "force = survie" échoueront. Seuls les modèles régularisés qui ont appris des patterns généraux s'adapteront.
-
-**Attention**: !!!! Dans la terre maudites l'atmosphère normalise les données de test !!!
-
-</details>
-
-### Règles du Tournoi
-
-1. **Complétez** Le model oracle [baseline_model.py](baseline_model.py)
-1. **Entraînez** votre modèle a l'aide de `uv run train.py`
-1. **Soumettez** Uploader votre meilleur fichier `.pt` dans l'interface web fournit par le maitre du jeu
-1. Le classement final sera basé sur un **test secret** !
-
-### Le Twist
-
-Le dataset de test secret contient des aventuriers partis en quête dans les **Terres Maudites**, où les règles sont légèrement différentes...
-
-Ceux qui ont sur-appris les données d'entraînement seront surpris !
-
-**Attention**: !!!! Dans la terre maudites l'atmosphère normalise les données de test !!!
-
-### Conseils
-
-Questions à vous poser :
-- Mon modèle est-il trop complexe pour la quantité de données ?
-- Est-ce que j'utilise de la régularisation (Dropout, Weight Decay) ?
-- Est-ce que je fais de l'early stopping ?
-- Mon modèle généralise-t-il ou mémorise-t-il ?
-
-## Commandes Utiles
-
-```bash
-# Générer les données
-uv run train_oracle.py
-```
-
-## Ressources
-
-- [PyTorch Documentation](https://pytorch.org/docs/stable/index.html)
-- [PyTorch Tutorials](https://pytorch.org/tutorials/)
-- Notebook `intro_pytorch.ipynb` pour les bases
+# ORACLE DU DONJON - Expérimentations
 
 ---
 
-*Que la chance soit avec vous, jeune Oracle !*
+## Expérience 1 : Baseline
 
----
-
-## Partie 3 : Les Archives Interdites - Oracle du Donjon (Séquences)
-
-### Le Nouveau Défi
-
-Après avoir maîtrisé la prédiction basée sur les statistiques, la Guilde vous confie une mission plus complexe : analyser les **journaux de donjon** pour prédire la survie des aventuriers.
-
-Cette fois, ce n'est plus un simple tableau de stats, mais une **séquence d'événements** !
-
-> La meilleur équipe sera celle qui arrive a la meilleur accuracy mais avec le model le plus petit possible !
-
-### Structure des Données
-
-```
-tp2/
-├── data/
-│   ├── train_dungeon.csv      # Données d'entraînement (séquences)
-│   ├── val_dungeon.csv        # Données de validation
-│   └── vocabulary_dungeon.json # Vocabulaire des événements
-├── baseline_model.py          # Contient DungeonOracle (à améliorer !)
-├── train_dungeon_logs.py      # Script d'entraînement séquences
-└── app_leaderboard_dungeon.py # Interface de soumission
-```
-
-### Format des Données
-
-Chaque aventurier est représenté par une **séquence d'événements** :
-
-```
-Entree -> Rat -> Potion -> Coffre -> Gobelin -> Dragon -> Sortie
-```
-
-| Token | Description |
-|-------|-------------|
-| `Entree` / `Sortie` | Début et fin du donjon |
-| `Rat`, `Gobelin`, `Orc`, `Troll`, `Dragon` | Monstres (dégâts croissants) |
-| `Potion`, `Feu_de_Camp`, `Fontaine_Sacree` | Soins |
-| `Piege_a_Pics`, `Fleches_Empoisonnees`, `Fosse` | Pièges |
-| `Coffre`, `Gemmes`, `Or`, `Relique` | Trésors |
-| `Amulette_Protection`, `Armure_Ancienne`, `Epee_Legendaire` | Objets spéciaux |
-
-**Label** : `survived` (1 = survit, 0 = mort)
-
-### Les Lois des Donjons (Archives Secrètes)
-
-<details>
-<summary>🔒 Parchemin des Archivistes</summary>
-
-#### L'ORDRE COMPTE !
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│              RÈGLE D'OR DES DONJONS                         │
-├─────────────────────────────────────────────────────────────┤
-│  ✅ Potion -> Dragon    = SURVIE (soigné avant le combat)   │
-│  ❌ Dragon -> Potion    = MORT   (trop tard pour se soigner)│
-└─────────────────────────────────────────────────────────────┘
-```
-
-#### DÉPENDANCES LONG-TERME
-
-- L'`Amulette_Protection` au **début** protège contre le Boss **final**
-- L'`Epee_Legendaire` trouvée tôt facilite **tous** les combats suivants
-- La `fatigue` s'accumule : trop de combats sans repos = danger
-
-*"L'ordre des épreuves détermine le destin de l'aventurier."*
-— Inscription sur les Archives Interdites
-
-</details>
-
-### Architecture Baseline : DungeonOracle
-
-A vous d'explorer le code pour trouver le meilleur moyen de crée votre model le plus petit mais également le plus performant !
-
-### Commandes d'Entraînement
+**Commande :**
 
 ```bash
-# Entraînement baseline (non optimal)
 uv run train_dungeon_logs.py
 ```
 
-### Règles du Tournoi Dungeon
+**Configuration :**
 
-Trouver le meilleur model mais également le plus petit !
+- mode: linear
+- embed_dim: 258
+- hidden_dim: 258
+- dropout: 0.0
+- epochs: 6
+- optimizer: sgd
+- learning_rate: 0.1
 
-### Le Twist
+**Résultats :**
 
-Le dataset de test secret contient des séquences de donjons **plus longues** et avec des **patterns inédits**...
+| Métrique | Valeur |
+|----------|--------|
+| Val Acc | 80.03% |
+| Train Acc | 95.67% |
+| Gap | 15.64% |
+| Paramètres | 9,397,909 |
 
-Les modèles qui ont mémorisé les séquences d'entraînement échoueront !
+**Par catégorie :**
+
+| Catégorie | Accuracy |
+|-----------|----------|
+| longterm_with_amulet_hard | 86.67% |
+| longterm_without_amulet_hard | 44.24% |
+| order_trap_die_hard | 81.88% |
+| order_trap_survive_hard | 81.25% |
+| hard | 93.33% |
+| normal_short | 91.78% |
+
+**Observations :**
+
+- OVERFITTING : Gap train-val de 15.64%
+- `longterm_without_amulet_hard` très faible (44.24%)
+- **Conclusion** : Augmenter dropout, réduire hidden_dim, ou ajouter régularisation
 
 ---
 
-*Que les Archives vous guident, jeune Oracle !*
+## Expérience 2 : Dropout + Hidden dim réduit
+
+**Commande :**
+
+```bash
+uv run train_dungeon_logs.py --dropout 0.3 --hidden_dim 128 --epochs 20
+```
+
+**Résultats :**
+
+| Métrique | Exp 2 | Baseline |
+|----------|-------|----------|
+| Val Acc | 80.23% | 80.03% |
+| Train Acc | 88.02% | 95.67% |
+| Gap | 7.79% | 15.64% |
+| Paramètres | 4,651,739 | 9,397,909 |
+
+**Observations :**
+
+- Gap train-val divisé par 2
+- `longterm_without_amulet_hard` passe de 44% à 31% (pire)
+- **Conclusion** : Le dropout aide mais il faut passer en `--mode lstm` pour capturer l'ordre
+
+---
+
+## Expérience 3 : LSTM (ÉCHEC)
+
+**Commande :**
+
+```bash
+uv run train_dungeon_logs.py --mode lstm --embed_dim 32 --hidden_dim 64 --dropout 0.2 --optimizer adam --learning_rate 0.001 --epochs 30
+```
+
+**Résultats :**
+
+| Métrique | Exp 3 | Baseline |
+|----------|-------|----------|
+| Val Acc | 56.67% | 80.03% |
+| Paramètres | 317,602 | 9,397,909 |
+
+**Observations :**
+
+- ÉCHEC : Le modèle ne converge pas (accuracy bloquée à 56.67%)
+- **Cause** : Learning rate 0.001 trop faible pour LSTM
+
+---
+
+## Expérience 4 : Linear + Weight Decay
+
+**Commande :**
+
+```bash
+uv run train_dungeon_logs.py --dropout 0.3 --hidden_dim 128 --weight_decay 0.001 --epochs 30
+```
+
+**Résultats :**
+
+| Métrique | Exp 4 | Baseline |
+|----------|-------|----------|
+| Val Acc | 89.93% | 80.03% |
+| Train Acc | 90.39% | 95.67% |
+| Gap | 0.46% | 15.64% |
+| Paramètres | 4,651,739 | 9,397,909 |
+
+**Par catégorie :**
+
+| Catégorie | Exp 4 | Baseline |
+|-----------|-------|----------|
+| longterm_with_amulet_hard | 100.00% | 86.67% |
+| longterm_without_amulet_hard | 73.13% | 44.24% |
+| order_trap_die_hard | 88.33% | 81.88% |
+| order_trap_survive_hard | 84.58% | 81.25% |
+
+**Observations :**
+
+- Val Acc 89.93% (+9.9% vs baseline)
+- Gap quasi nul (0.46%)
+- **Conclusion** : Le weight_decay est la clé pour la généralisation
+
+---
+
+## Expérience 5 : Linear + Scheduler (sans weight_decay)
+
+**Commande :**
+
+```bash
+uv run train_dungeon_logs.py --dropout 0.3 --hidden_dim 128 --use_scheduler --epochs 40
+```
+
+**Résultats :**
+
+| Métrique | Exp 5 | Exp 4 |
+|----------|-------|-------|
+| Val Acc | 80.47% | 89.93% |
+| Gap | 11.25% | 0.46% |
+
+**Observations :**
+
+- Le scheduler seul ne suffit pas
+- **Conclusion** : Le weight_decay est plus important que le scheduler
+
+---
+
+## Expérience 6 : RNN simple (ÉCHEC)
+
+**Commande :**
+
+```bash
+uv run train_dungeon_logs.py --mode rnn --embed_dim 64 --hidden_dim 128 --optimizer sgd --learning_rate 0.1 --epochs 20
+```
+
+**Résultats :**
+
+| Métrique | Exp 6 | Baseline |
+|----------|-------|----------|
+| Val Acc | 56.67% | 80.03% |
+
+**Observations :**
+
+- ÉCHEC : Comme LSTM, le RNN ne converge pas
+
+---
+
+## Expérience 7 : Linear ultra-léger + Weight Decay
+
+**Commande :**
+
+```bash
+uv run train_dungeon_logs.py --embed_dim 32 --hidden_dim 32 --dropout 0.3 --weight_decay 0.001 --epochs 30
+```
+
+**Résultats :**
+
+| Métrique | Exp 7 | Exp 4 |
+|----------|-------|-------|
+| Val Acc | 88.87% | 89.93% |
+| Paramètres | 145,921 | 4,651,739 |
+
+**Observations :**
+
+- 88.87% accuracy avec seulement 145K paramètres
+- 32x moins de paramètres que Exp 4, seulement -1% d'accuracy
+
+---
+
+## Expérience 8 : Ultra-léger + Weight Decay + Scheduler
+
+**Commande :**
+
+```bash
+uv run train_dungeon_logs.py --embed_dim 24 --hidden_dim 24 --dropout 0.3 --weight_decay 0.001 --use_scheduler --epochs 20
+```
+
+**Résultats :**
+
+| Métrique | Exp 8 | Exp 4 |
+|----------|-------|-------|
+| Val Acc | 89.13% | 89.93% |
+| Paramètres | 82,369 | 4,651,739 |
+
+**Observations :**
+
+- 89.13% accuracy avec seulement 82K paramètres
+- 56x moins de paramètres que Exp 4
+
+---
+
+## Expérience 9 : Ultra-léger + Dropout 0.2
+
+**Commande :**
+
+```bash
+uv run train_dungeon_logs.py --embed_dim 24 --hidden_dim 24 --dropout 0.2 --weight_decay 0.001 --use_scheduler --epochs 20
+```
+
+**Résultats :**
+
+| Métrique | Exp 9 | Exp 8 |
+|----------|-------|-------|
+| Val Acc | 90.10% | 89.13% |
+| Paramètres | 82,369 | 82,369 |
+
+**Observations :**
+
+- 90.10% avec 82K params bat l'Exp 4 (89.93% avec 4.6M params)
+- Dropout 0.2 > 0.3 pour ce modèle léger
+
+---
+
+## Expérience 10 : Linear Dropout 0.1
+
+**Commande :**
+
+```bash
+uv run train_dungeon_logs.py --embed_dim 24 --hidden_dim 24 --dropout 0.1 --weight_decay 0.001 --use_scheduler --epochs 20
+```
+
+**Résultats :**
+
+| Métrique | Exp 10 | Exp 9 |
+|----------|--------|-------|
+| Val Acc | 90.43% | 90.10% |
+| Paramètres | 82,369 | 82,369 |
+
+**Par catégorie :**
+
+| Catégorie | Exp 10 | Baseline |
+|-----------|--------|----------|
+| longterm_without_amulet_hard | 77.17% | 44.24% |
+| order_trap_survive_hard | 86.46% | 81.25% |
+
+**Observations :**
+
+- Meilleur modèle Linear : 90.43% avec 82K params
+- Dropout 0.1 > 0.2 > 0.3 pour ce modèle léger
+
+---
+
+## Expérience 11 : LSTM Bidirectionnel (sans scheduler)
+
+**Commande :**
+
+```bash
+uv run train_dungeon_logs.py --mode lstm --embed_dim 24 --hidden_dim 24 --num_layers 2 --dropout 0.2 --bidirectional --weight_decay 0.001 --optimizer sgd --learning_rate 0.1 --epochs 30
+```
+
+**Résultats :**
+
+| Métrique | Exp 11 | Exp 10 (Linear) |
+|----------|--------|-----------------|
+| Val Acc | 95.77% | 90.43% |
+| Train Acc | 94.84% | 92.59% |
+| Gap | -0.93% | 2.16% |
+| Paramètres | 106,226 | 82,369 |
+
+**Par catégorie :**
+
+| Catégorie | Exp 11 | Exp 10 |
+|-----------|--------|--------|
+| longterm_without_amulet_hard | 93.74% | 77.17% |
+| order_trap_die_hard | 92.71% | 87.92% |
+| order_trap_survive_hard | 90.62% | 86.46% |
+
+**Observations :**
+
+- LSTM converge enfin avec SGD + weight_decay
+- Val Acc 95.77% (+5.34% vs Linear best)
+- **Clés du succès** : SGD (pas Adam), lr=0.1, weight_decay=0.001, bidirectionnel, 2 couches
+
+---
+
+## Expérience 12 : LSTM Bi + Scheduler
+
+**Commande :**
+
+```bash
+uv run train_dungeon_logs.py --mode lstm --embed_dim 24 --hidden_dim 24 --num_layers 2 --dropout 0.2 --bidirectional --weight_decay 0.001 --optimizer sgd --learning_rate 0.1 --epochs 50 --use_scheduler --early_stopping --patience 10
+```
+
+**Résultats :**
+
+| Métrique | Exp 12 | Exp 11 |
+|----------|--------|--------|
+| Val Acc | 97.07% | 95.77% |
+| Train Acc | 97.26% | 94.84% |
+| Gap | 0.19% | -0.93% |
+| Paramètres | 106,226 | 106,226 |
+
+**Par catégorie :**
+
+| Catégorie | Exp 12 | Exp 11 |
+|-----------|--------|--------|
+| longterm_with_amulet_hard | 100.00% | 99.80% |
+| longterm_without_amulet_hard | 96.16% | 93.74% |
+| order_trap_die_hard | 93.96% | 92.71% |
+| order_trap_survive_hard | 93.12% | 90.62% |
+
+**Observations :**
+
+- 97.07% (+1.30% vs Exp 11)
+- Le scheduler améliore encore les performances
+
+---
+
+## Expérience 13 : LSTM Bi + Dropout 0.1 (MEILLEUR)
+
+**Commande :**
+
+```bash
+uv run train_dungeon_logs.py --mode lstm --embed_dim 24 --hidden_dim 24 --num_layers 2 --dropout 0.1 --bidirectional --weight_decay 0.001 --optimizer sgd --learning_rate 0.1 --epochs 50 --use_scheduler --early_stopping --patience 10
+```
+
+**Résultats :**
+
+| Métrique | Exp 13 | Exp 12 | Baseline |
+|----------|--------|--------|----------|
+| Val Acc | 97.30% | 97.07% | 80.03% |
+| Train Acc | 97.36% | 97.26% | 95.67% |
+| Gap | 0.06% | 0.19% | 15.64% |
+| Paramètres | 106,226 | 106,226 | 9,397,909 |
+
+**Par catégorie :**
+
+| Catégorie | Exp 13 | Baseline |
+|-----------|--------|----------|
+| longterm_with_amulet_hard | 100.00% | 86.67% |
+| longterm_without_amulet_hard | 99.60% | 44.24% |
+| order_trap_die_hard | 95.83% | 81.88% |
+| order_trap_survive_hard | 91.46% | 81.25% |
+| hard | 97.41% | 93.33% |
+| normal_short | 97.33% | 91.78% |
+
+**Observations :**
+
+- RECORD FINAL : 97.30% avec 106K paramètres
+- `longterm_without_amulet_hard` : 99.60% (vs 44.24% baseline = +55.36%)
+- Gap quasi nul (0.06%)
+
+---
+
+## Résumé Final
+
+| Rang | Expérience | Val Acc | Paramètres |
+|------|------------|---------|------------|
+| 1 | Exp 13 (LSTM Bi, dropout 0.1) | 97.30% | 106,226 |
+| 2 | Exp 12 (LSTM Bi, dropout 0.2) | 97.07% | 106,226 |
+| 3 | Exp 11 (LSTM Bi, sans scheduler) | 95.77% | 106,226 |
+| 4 | Exp 10 (Linear, dropout 0.1) | 90.43% | 82,369 |
+| 5 | Baseline | 80.03% | 9,397,909 |
+
+**Meilleure commande :**
+
+```bash
+uv run train_dungeon_logs.py --mode lstm --embed_dim 24 --hidden_dim 24 --num_layers 2 --dropout 0.1 --bidirectional --weight_decay 0.001 --optimizer sgd --learning_rate 0.1 --epochs 50 --use_scheduler --early_stopping --patience 10
+```
+
+**Amélioration totale : +17.27% accuracy, -99% paramètres**
