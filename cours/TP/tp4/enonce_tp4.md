@@ -19,10 +19,12 @@
 - [LLamafactory Documentation](https://llamafactory.readthedocs.io/en/latest/)
 - [Repo officiel du papier scientifique](https://github.com/D2I-ai/dasd-thinking)
 - [Dataset de référence DASD](https://huggingface.co/datasets/Alibaba-Apsara/Superior-Reasoning-SFT-gpt-oss-120b)
+- [Multi GPU train pour kaggle](https://llamafactory.readthedocs.io/en/latest/advanced/distributed.html#id4)
 
 ### API Enseignant (Teacher)
 
 Utilisez l'API AI d'Infomaniak :
+
 - **URL** : `https://api.infomaniak.com/2/ai/48/openai/v1`
 - **Modèles disponibles** : Consultez la documentation Infomaniak pour choisir votre modèle
 - **Format** : Compatible OpenAI
@@ -43,29 +45,31 @@ Utilisez l'API AI d'Infomaniak :
 
 ### Le Problème
 
-Les grands LLMs (GPT-4, Claude, Qwen-235B) ont d'excellentes capacités de raisonnement mais sont coûteux et impossibles à déployer localement.
+Les grands LLMs (GPT-4, Claude, Qwen-235B) ont d'excellentes capacités de raisonnement mais sont coûteux et impossibles
+à déployer localement.
 
-**Question :** Comment transférer les capacités de raisonnement d'un modèle "enseignant" massif vers un modèle "étudiant" compact ?
+**Question :** Comment transférer les capacités de raisonnement d'un modèle "enseignant" massif vers un modèle "
+étudiant" compact ?
 
 ### La Solution DASD
 
 Le papier propose deux techniques clés :
 
-| Technique | Objectif |
-|-----------|----------|
-| Temperature-Scheduled Learning | Équilibrer stabilité (τ basse) et diversité (τ haute) |
+| Technique                       | Objectif                                                     |
+|---------------------------------|--------------------------------------------------------------|
+| Temperature-Scheduled Learning  | Équilibrer stabilité (τ basse) et diversité (τ haute)        |
 | Divergence-Aware Sampling (DAS) | Sélectionner les données où l'étudiant a le plus à apprendre |
 
 ---
 
 ## Stack Technique
 
-| Composant | Choix |
-|-----------|-------|
-| Framework | Llama-Factory |
+| Composant       | Choix                                             |
+|-----------------|---------------------------------------------------|
+| Framework       | Llama-Factory                                     |
 | Modèle Étudiant | `unsloth/Qwen3-4B-Instruct-2507-unsloth-bnb-4bit` |
-| Fine-tuning | LoRA |
-| API Teacher | Infomaniak AI |
+| Fine-tuning     | LoRA                                              |
+| API Teacher     | Infomaniak AI                                     |
 
 ---
 
@@ -73,9 +77,10 @@ Le papier propose deux techniques clés :
 
 ## Phase 1 : Installation de l'environnement
 
-Installez Llama-Factory avec le support Unsloth sur Colab/Kaggle.
+Installez Llama-Factory sur Colab/Kaggle/local.
 
 Ressources :
+
 - [Installation Llama-Factory](https://llamafactory.readthedocs.io/en/latest/getting_started/installation.html)
 - [Notebook de démo](https://colab.research.google.com/drive/1qy4thB5CLOVSxAY7VYlL4TsR3I9UOKuR?usp=sharing)
 
@@ -86,17 +91,18 @@ Ressources :
 ## Phase 2 : Étude du Dataset de référence
 
 Explorez le dataset officiel DASD sur HuggingFace pour comprendre :
+
 - Le format des données (instruction/response)
-- La structure `<think>...</think>` ou `<reasoning>...</reasoning>`
+- La structure `<think>...</think>` ou `<reasoning>...</reasoning>` (si vous utiliser un teacher thinking)
 - La longueur et qualité des réponses
 
 ```python
 from datasets import load_dataset
 
 reference_dataset = load_dataset(
-    "Alibaba-Apsara/Superior-Reasoning-SFT-gpt-oss-120b",
-    "stage1"
-)
+        "Alibaba-Apsara/Superior-Reasoning-SFT-gpt-oss-120b",
+        "stage1"
+        )
 ```
 
 ---
@@ -106,10 +112,11 @@ reference_dataset = load_dataset(
 ### 3.1 Choisir un dataset d'instructions source
 
 Sélectionnez des instructions/questions (sans réponses) depuis un dataset existant :
+
 - GSM8K (math)
 - Alpaca (général)
 - CodeAlpaca (code)
-- Ou créez les vôtres
+- **Ou créez les vôtres**
 
 ### 3.2 Configurer l'API Infomaniak
 
@@ -117,9 +124,9 @@ Sélectionnez des instructions/questions (sans réponses) depuis un dataset exis
 import openai
 
 client = openai.OpenAI(
-    base_url="https://api.infomaniak.com/2/ai/48/openai/v1",
-    api_key="VOTRE_CLE_API"
-)
+        base_url="https://api.infomaniak.com/2/ai/48/openai/v1",
+        api_key="VOTRE_CLE_API"
+        )
 
 # Choisissez un modèle disponible via l'API
 TEACHER_MODEL = "..."  # À vous de déterminer
@@ -128,12 +135,15 @@ TEACHER_MODEL = "..."  # À vous de déterminer
 ### 3.3 Générer les réponses
 
 Implémentez une fonction qui :
+
 1. Appelle l'API avec un **system prompt** encourageant le raisonnement structuré
-2. Génère des réponses à **basse température** (τ ≈ 0.3) → Stage 1
-3. Génère des réponses à **haute température** (τ ≈ 0.9) → Stage 2
-4. Sauvegarde les résultats au format JSON
+1. exporter les logprobs pour appliquer DASD
+1. Génère des réponses à **basse température** (τ ≈ 0.3) → Stage 1
+1. Génère des réponses à **haute température** (τ ≈ 0.9) → Stage 2
+1. Sauvegarde les résultats au format JSON
 
 **À implémenter :**
+
 - Gestion des erreurs et retry
 - Filtrage de qualité des réponses
 - Conversion au format Llama-Factory (ShareGPT ou Alpaca)
@@ -146,10 +156,10 @@ Implémentez une fonction qui :
   "logprobs": true,
   "temperature": 0.15,
   "messages": [
-            {
-          "role": "system",
-          "content": "You are a helpful assistant that reasoning step by step. Always structure your reasoning inside <reasoning>...</reasoning> tags before giving your final answer. Be thorough in your reasoning process."
-        },
+    {
+      "role": "system",
+      "content": "You are a helpful assistant that reasoning step by step. Always structure your reasoning inside <reasoning>...</reasoning> tags before giving your final answer. Be thorough in your reasoning process."
+    },
     {
       "role": "user",
       "content": "Traduire la phrase en EN: LE chat vas très bien !"
@@ -162,17 +172,28 @@ Implémentez une fonction qui :
 
 ## Phase 4 : Implémentation du Divergence-Aware Sampling (DAS)
 
-### Concept
+### Concept Révisé
 
-```
-Score_DAS(réponse) = log P_teacher(réponse) - log P_student(réponse)
-```
+Le DAS ne juge pas une réponse dans sa globalité, mais analyse la **divergence phrase par phrase**. L'objectif est d'identifier et de conserver les réponses riches en "Teacher Sentences" : des étapes de raisonnement où le professeur est confiant mais où l'étudiant échoue ou hésite.
 
-| Score | Signification |
-|-------|---------------|
-| Élevé | L'étudiant a beaucoup à apprendre → Garder |
-| Faible | Redondant → Peut être ignoré |
-| Négatif | L'étudiant est trop confiant → Attention |
+### Formule (Niveau Phrase)
+
+Pour chaque phrase de la réponse, on calcule la divergence sur les probabilités linéaires (et non les log-probs bruts) :
+
+*Où est la moyenne géométrique des probabilités des tokens de la phrase :*
+
+
+### Matrice de Décision
+
+L'algorithme classe chaque phrase pour décider de la qualité globale de l'exemple d'entraînement :
+
+| Type de Phrase | Condition mathématique          | Signification | Action |
+|---|---------------------------------|---|---|
+| **Teacher Sentence** | *Pt >> PS* (ex: $0.9$ vs $0.3$) | Le Teacher sait, l’Étudiant ignore. C’est ici que réside la valeur pédagogique. | **GARDER** (signal fort) |
+| **Shared Sentence** | *PT ~= PS* (ex: $0.9$ vs $0.8$) | Connaissances déjà acquises ou triviales. | **NEUTRE** (sert de liaison) |
+| **Student Sentence** | *Ps > PT* (ex: $0.4$ vs $0.9$)                      | L’étudiant est « trop » confiant (hallucination probable) ou le Teacher est incertain. | **REJETER** (bruit nuisible) |
+
+**Critère de filtrage final :** On conserve la réponse complète uniquement si elle contient une densité suffisante de *Teacher Sentences* (divergence positive significative).
 
 ### À implémenter
 
@@ -181,41 +202,15 @@ Score_DAS(réponse) = log P_teacher(réponse) - log P_student(réponse)
 3. Filtrer/trier les exemples selon leur score DAS
 4. Analyser la distribution des scores (histogramme)
 
-**Question de réflexion :** Pourquoi filtrer les exemples où l'étudiant est déjà confiant ?
-
 ---
 
 ## Phase 5 : Configuration de l'entraînement
 
-Créez les fichiers de configuration YAML pour Llama-Factory :
+Crée vos config pour le Stage 1 (données basse température) & Stage 2 (données haute température)
 
-### Stage 1 (données basse température)
-
-Paramètres clés à configurer :
-- `model_name_or_path` : modèle Unsloth quantifié
-- `finetuning_type: lora`
-- `dataset` : votre dataset stage 1
-- `template: qwen`
-- `output_dir` : sur Google Drive
-
-### Stage 2 (données haute température)
-
-- Charger l'adaptateur du Stage 1
-- Learning rate plus faible
-- Moins d'epochs
+Faire attention de bien charger l'adapter lora entre le stage 1 & 2
 
 Référence : [Configuration Llama-Factory](https://llamafactory.readthedocs.io/en/latest/getting_started/sft.html)
-
----
-
-## Phase 6 : Lancement de l'entraînement
-
-```bash
-llamafactory-cli train votre_config_stage1.yaml
-llamafactory-cli train votre_config_stage2.yaml
-```
-
-> **Important :** Sauvegardez vos checkpoints sur Google Drive pour éviter de perdre votre travail.
 
 ---
 
@@ -232,14 +227,15 @@ llamafactory-cli train votre_config_stage2.yaml
 ## Phase 8 : Test du modèle distillé
 
 1. Charger le modèle de base + adaptateur LoRA
-2. Tester sur des prompts de raisonnement
-3. Vérifier la présence de la structure de raisonnement dans les réponses
+2. Tester sur des prompts
+3. Vérifier les réponses
 
 ---
 
 ## Phase 9 : Évaluation quantitative
 
 Évaluez votre modèle sur un benchmark (ex: GSM8K) :
+
 - Comparer avec le modèle de base (sans distillation)
 - Mesurer l'amélioration
 
@@ -248,6 +244,7 @@ llamafactory-cli train votre_config_stage2.yaml
 ## Phase 10 : Documentation
 
 Préparez votre rapport avec :
+
 - Méthodologie et choix techniques
 - Statistiques du dataset généré
 - Courbes de loss
@@ -276,26 +273,26 @@ Préparez votre rapport avec :
 
 ## Critères d'Évaluation
 
-| Critère | Points |
-|---------|--------|
-| Installation et configuration | 2 |
-| Génération dataset via API | 5 |
-| Implémentation DAS | 3 |
-| Entraînement fonctionnel | 4 |
-| Évaluation et analyse | 3 |
-| Qualité du rapport | 3 |
-| **Total** | **20** |
+| Critère                       | Points |
+|-------------------------------|--------|
+| Installation et configuration | 2      |
+| Génération dataset via API    | 5      |
+| Implémentation DAS            | 3      |
+| Entraînement fonctionnel      | 4      |
+| Évaluation et analyse         | 3      |
+| Qualité du rapport            | 3      |
+| **Total**                     | **20** |
 
 ---
 
 ## Troubleshooting
 
-| Problème | Solution |
-|----------|----------|
-| Rate limit API | Augmenter le délai entre requêtes |
-| OOM GPU | Réduire `cutoff_len`, activer `gradient_checkpointing` |
-| Loss ne descend pas | Vérifier le format des données |
-| Pas de `<reasoning>` dans les réponses | Ajuster le system prompt |
+| Problème                               | Solution                                               |
+|----------------------------------------|--------------------------------------------------------|
+| Rate limit API                         | Augmenter le délai entre requêtes                      |
+| OOM GPU                                | Réduire `cutoff_len`, activer `gradient_checkpointing` |
+| Loss ne descend pas                    | Vérifier le format des données                         |
+| Pas de `<reasoning>` dans les réponses | Ajuster le system prompt                               |
 
 ---
 
