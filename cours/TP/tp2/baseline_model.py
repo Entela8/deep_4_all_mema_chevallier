@@ -33,7 +33,6 @@ class GuildOracle(nn.Module):
             num_layers: Nombre de couches cachées
         """
         super().__init__()
-
         layers = []
         prev_dim = input_dim
 

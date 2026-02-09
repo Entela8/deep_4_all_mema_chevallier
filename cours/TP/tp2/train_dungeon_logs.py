@@ -300,9 +300,15 @@ def main(args):
     # Scheduler (optionnel)
     scheduler = None
     if args.use_scheduler:
-        scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-                optimizer, mode='max', factor=0.5, patience=5, verbose=True
-                )
+        try:
+            scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+                    optimizer, mode='max', factor=0.5, patience=5, verbose=True
+                    )
+        except TypeError:
+            # Older PyTorch versions don't support verbose
+            scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+                    optimizer, mode='max', factor=0.5, patience=5
+                    )
 
     print(f"Optimiseur: {args.optimizer.upper()}, LR: {args.learning_rate}")
 
