@@ -20,7 +20,7 @@
 - [Repo officiel du papier scientifique](https://github.com/D2I-ai/dasd-thinking)
 - [Dataset de référence DASD](https://huggingface.co/datasets/Alibaba-Apsara/Superior-Reasoning-SFT-gpt-oss-120b)
 - [Multi GPU train pour kaggle](https://llamafactory.readthedocs.io/en/latest/advanced/distributed.html#id4)
-- [Format de data pour llamafactry](https://llamafactory.readthedocs.io/en/latest/getting_started/data_preparation.html#sharegpt)
+- [Format de data pour LLamafactory](https://llamafactory.readthedocs.io/en/latest/getting_started/data_preparation.html#sharegpt)
 
 ### API Enseignant (Teacher)
 
