@@ -1,102 +1,364 @@
-# deep_4_all
+# ORACLE DU DONJON - Expérimentations
+Entela MEMA, Jules CHEVALLIER
+M2 Informatique
+---
 
-Cours et codes pour enseigner le deep learning.
+## Expérience 1 : Baseline
 
-## Prérequis
-
-- Python 3.13+
-- [uv](https://docs.astral.sh/uv/) (gestionnaire de paquets Python)
-
-## Installation
-
-### 1. Installer uv
-
-**Windows (PowerShell):**
-```powershell
-irm https://astral.sh/uv/install.ps1 | iex
-```
-
-**Linux/macOS:**
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-
-### 2. Cloner le projet
+**Commande :**
 
 ```bash
-git clone https://github.com/blancsw/deep_4_all.git
-cd deep_4_all
+uv run train_dungeon_logs.py
 ```
 
-### 3. Installer les dépendances
+**Configuration :**
 
-pour mac ou si vous avez que un processeur Intel pas de GPU 
+- mode: MLP
+- embed_dim: 258
+- hidden_dim: 258
+- dropout: 0.0
+- epochs: 6
+- optimizer: sgd
+- learning_rate: 0.1
+
+**Résultats :**
+
+| Métrique   | Valeur    |
+| ---------- | --------- |
+| Val Acc    | 80.03%    |
+| Train Acc  | 95.67%    |
+| Gap        | 15.64%    |
+| Paramètres | 9,397,909 |
+
+**Par catégorie :**
+
+| Catégorie                    | Accuracy |
+| ---------------------------- | -------- |
+| longterm_with_amulet_hard    | 86.67%   |
+| longterm_without_amulet_hard | 44.24%   |
+| order_trap_die_hard          | 81.88%   |
+| order_trap_survive_hard      | 81.25%   |
+| hard                         | 93.33%   |
+| normal_short                 | 91.78%   |
+
+**Observations :**
+
+- OVERFITTING : Gap train-val de 15.64%
+- `longterm_without_amulet_hard` très faible (44.24%)
+- **Conclusion** : Augmenter dropout, réduire hidden_dim, ou ajouter régularisation
+
+---
+
+## Expérience 2 : Dropout + Hidden dim réduit
+
+**Commande :**
 
 ```bash
-uv sync
+uv run train_dungeon_logs.py --dropout 0.3 --hidden_dim 128 --epochs 20
 ```
 
-Si vous avre un GPU nvidia
+**Résultats :**
 
-Cette commande crée automatiquement un environnement virtuel et installe toutes les dépendances.
+| Métrique   | Exp 2     | Baseline  |
+| ---------- | --------- | --------- |
+| Val Acc    | 80.23%    | 80.03%    |
+| Train Acc  | 88.02%    | 95.67%    |
+| Gap        | 7.79%     | 15.64%    |
+| Paramètres | 4,651,739 | 9,397,909 |
 
-Pour installer pytorch GPU
+**Observations :**
 
-````bash
-uv sync --extra cu130
-````
+- Gap train-val divisé par 2
+- `longterm_without_amulet_hard` passe de 44% à 31% (pire)
+- **Conclusion** : Le dropout aide mais il faut passer en `--mode lstm` pour capturer l'ordre
 
-## Utilisation pour les Cours
+---
+
+## Expérience 4 : MLP + Weight Decay
+
+**Commande :**
 
 ```bash
-uv run marimo edit
+uv run train_dungeon_logs.py --dropout 0.3 --hidden_dim 128 --weight_decay 0.001 --epochs 30
 ```
 
-Activer l'environnement et lancer Jupyter Lab :
+**Résultats :**
+
+| Métrique   | Exp 4     | Baseline  |
+| ---------- | --------- | --------- |
+| Val Acc    | 89.93%    | 80.03%    |
+| Train Acc  | 90.39%    | 95.67%    |
+| Gap        | 0.46%     | 15.64%    |
+| Paramètres | 4,651,739 | 9,397,909 |
+
+**Par catégorie :**
+
+| Catégorie                    | Exp 4   | Baseline |
+| ---------------------------- | ------- | -------- |
+| longterm_with_amulet_hard    | 100.00% | 86.67%   |
+| longterm_without_amulet_hard | 73.13%  | 44.24%   |
+| order_trap_die_hard          | 88.33%  | 81.88%   |
+| order_trap_survive_hard      | 84.58%  | 81.25%   |
+
+**Observations :**
+
+- Val Acc 89.93% (+9.9% vs baseline)
+- Gap quasi nul (0.46%)
+- **Conclusion** : Le weight_decay est la clé pour la généralisation
+
+---
+
+## Expérience 5 : MLP + Scheduler (sans weight_decay)
+
+**Commande :**
 
 ```bash
-uv run jupyter lab
+uv run train_dungeon_logs.py --dropout 0.3 --hidden_dim 128 --use_scheduler --epochs 40
 ```
 
-## Structure du dossier `cours/`
+**Résultats :**
 
-```
-cours/
-├── CM/                          # Cours Magistraux (notebooks Marimo)
-│   ├── 01_cours_neural_networks.py   # Introduction aux réseaux de neurones
-│   ├── 02_word_embedding.py          # Word embeddings
-│   ├── 03_LSTM_RNN.py                # LSTM et réseaux récurrents
-│   └── 04_transformers.py            # Transformers et self-attention
-│
-└── TP/                          # Travaux Pratiques
-    ├── tp1_micrograd/           # Autograd from scratch (micrograd)
-    ├── tp2/                     # TP2-3 : PyTorch MLP et généralisation
-    └── tp4/                     # Distillation de modèles (DASD)
-```
+| Métrique | Exp 5  | Exp 4  |
+| -------- | ------ | ------ |
+| Val Acc  | 80.47% | 89.93% |
+| Gap      | 11.25% | 0.46%  |
 
-### CM - Cours Magistraux
+**Observations :**
 
-Les cours sont des notebooks [Marimo](https://marimo.io/) interactifs.
+- Le scheduler seul ne suffit pas
+- **Conclusion** : Le weight_decay est plus important que le scheduler
 
-| CM | Sujet | Description |
-|----|-------|-------------|
-| **CM1** | Réseaux de neurones | Perceptron, MLP, fonctions d'activation, backpropagation |
-| **CM2** | Word Embeddings | Représentations vectorielles, Word2Vec, similarité sémantique |
-| **CM3** | LSTM & RNN | Réseaux récurrents, LSTM, GRU, séquences |
-| **CM4** | Transformers | Self-attention, architecture Transformer, positional encoding |
+---
 
-Pour lancer un cours :
+## Expérience 7 : MLP ultra-léger + Weight Decay
+
+**Commande :**
 
 ```bash
-uv run marimo run cours/CM/01_cours_neural_networks.py
+uv run train_dungeon_logs.py --embed_dim 32 --hidden_dim 32 --dropout 0.3 --weight_decay 0.001 --epochs 30
 ```
 
-### TP - Travaux Pratiques
+**Résultats :**
 
-| TP | Sujet | Description |
-|----|-------|-------------|
-| **TP1** | Micrograd | Implémentation de l'autograd from scratch, introduction à PyTorch |
-| **TP2-3** | PyTorch MLP | Entraînement de MLP, optimisation, régularisation, leaderboard |
-| **TP4** | DASD | Distillation de modèles de raisonnement (Long-CoT) |
+| Métrique   | Exp 7   | Exp 4     |
+| ---------- | ------- | --------- |
+| Val Acc    | 88.87%  | 89.93%    |
+| Paramètres | 145,921 | 4,651,739 |
 
-> **Note :** Le TP3 (LSTM, embeddings, RNN) est intégré au cours `03_LSTM_RNN.py`.
+**Observations :**
+
+- 88.87% accuracy avec seulement 145K paramètres
+- 32x moins de paramètres que Exp 4, seulement -1% d'accuracy
+
+---
+
+## Expérience 8 : Ultra-léger + Weight Decay + Scheduler
+
+**Commande :**
+
+```bash
+uv run train_dungeon_logs.py --embed_dim 24 --hidden_dim 24 --dropout 0.3 --weight_decay 0.001 --use_scheduler --epochs 20
+```
+
+**Résultats :**
+
+| Métrique   | Exp 8  | Exp 4     |
+| ---------- | ------ | --------- |
+| Val Acc    | 89.13% | 89.93%    |
+| Paramètres | 82,369 | 4,651,739 |
+
+**Observations :**
+
+- 89.13% accuracy avec seulement 82K paramètres
+- 56x moins de paramètres que Exp 4
+
+---
+
+## Expérience 9 : Ultra-léger + Dropout 0.2
+
+**Commande :**
+
+```bash
+uv run train_dungeon_logs.py --embed_dim 24 --hidden_dim 24 --dropout 0.2 --weight_decay 0.001 --use_scheduler --epochs 20
+```
+
+**Résultats :**
+
+| Métrique   | Exp 9  | Exp 8  |
+| ---------- | ------ | ------ |
+| Val Acc    | 90.10% | 89.13% |
+| Paramètres | 82,369 | 82,369 |
+
+**Observations :**
+
+- 90.10% avec 82K params bat l'Exp 4 (89.93% avec 4.6M params)
+- Dropout 0.2 > 0.3 pour ce modèle léger
+
+---
+
+## Expérience 10 : MLP Dropout 0.1
+
+**Commande :**
+
+```bash
+uv run train_dungeon_logs.py --embed_dim 24 --hidden_dim 24 --dropout 0.1 --weight_decay 0.001 --use_scheduler --epochs 20
+```
+
+**Résultats :**
+
+| Métrique   | Exp 10 | Exp 9  |
+| ---------- | ------ | ------ |
+| Val Acc    | 90.43% | 90.10% |
+| Paramètres | 82,369 | 82,369 |
+
+**Par catégorie :**
+
+| Catégorie                    | Exp 10 | Baseline |
+| ---------------------------- | ------ | -------- |
+| longterm_without_amulet_hard | 77.17% | 44.24%   |
+| order_trap_survive_hard      | 86.46% | 81.25%   |
+
+**Observations :**
+
+- Meilleur modèle MLP : 90.43% avec 82K params
+- Dropout 0.1 > 0.2 > 0.3 pour ce modèle léger
+
+---
+
+## Expérience 11 : LSTM Bidirectionnel (sans scheduler)
+
+**Commande :**
+
+```bash
+uv run train_dungeon_logs.py --mode lstm --embed_dim 24 --hidden_dim 24 --num_layers 2 --dropout 0.2 --bidirectional --weight_decay 0.001 --optimizer sgd --learning_rate 0.1 --epochs 30
+```
+
+**Résultats :**
+
+| Métrique   | Exp 11  | Exp 10 (MLP) |
+| ---------- | ------- | ------------ |
+| Val Acc    | 95.77%  | 90.43%       |
+| Train Acc  | 94.84%  | 92.59%       |
+| Gap        | -0.93%  | 2.16%        |
+| Paramètres | 106,226 | 82,369       |
+
+**Par catégorie :**
+
+| Catégorie                    | Exp 11 | Exp 10 |
+| ---------------------------- | ------ | ------ |
+| longterm_without_amulet_hard | 93.74% | 77.17% |
+| order_trap_die_hard          | 92.71% | 87.92% |
+| order_trap_survive_hard      | 90.62% | 86.46% |
+
+**Observations :**
+
+- LSTM converge enfin avec SGD + weight_decay
+- Val Acc 95.77% (+5.34% vs MLP best)
+- **Clés du succès** : SGD (pas Adam), lr=0.1, weight_decay=0.001, bidirectionnel, 2 couches
+
+---
+
+## Expérience 12 : LSTM Bi + Scheduler
+
+**Commande :**
+
+```bash
+uv run train_dungeon_logs.py --mode lstm --embed_dim 24 --hidden_dim 24 --num_layers 2 --dropout 0.2 --bidirectional --weight_decay 0.001 --optimizer sgd --learning_rate 0.1 --epochs 50 --use_scheduler --early_stopping --patience 10
+```
+
+**Résultats :**
+
+| Métrique   | Exp 12  | Exp 11  |
+| ---------- | ------- | ------- |
+| Val Acc    | 97.07%  | 95.77%  |
+| Train Acc  | 97.26%  | 94.84%  |
+| Gap        | 0.19%   | -0.93%  |
+| Paramètres | 106,226 | 106,226 |
+
+**Par catégorie :**
+
+| Catégorie                    | Exp 12  | Exp 11 |
+| ---------------------------- | ------- | ------ |
+| longterm_with_amulet_hard    | 100.00% | 99.80% |
+| longterm_without_amulet_hard | 96.16%  | 93.74% |
+| order_trap_die_hard          | 93.96%  | 92.71% |
+| order_trap_survive_hard      | 93.12%  | 90.62% |
+
+**Observations :**
+
+- 97.07% (+1.30% vs Exp 11)
+- Le scheduler améliore encore les performances
+
+---
+
+## Expérience 13 : LSTM Bi + Dropout 0.1 (MEILLEUR)
+
+**Commande :**
+
+```bash
+uv run train_dungeon_logs.py --mode lstm --embed_dim 24 --hidden_dim 24 --num_layers 2 --dropout 0.1 --bidirectional --weight_decay 0.001 --optimizer sgd --learning_rate 0.1 --epochs 50 --use_scheduler --early_stopping --patience 10
+```
+
+**Résultats :**
+
+| Métrique   | Exp 13  | Exp 12  | Baseline  |
+| ---------- | ------- | ------- | --------- |
+| Val Acc    | 97.30%  | 97.07%  | 80.03%    |
+| Train Acc  | 97.36%  | 97.26%  | 95.67%    |
+| Gap        | 0.06%   | 0.19%   | 15.64%    |
+| Paramètres | 106,226 | 106,226 | 9,397,909 |
+
+**Par catégorie :**
+
+| Catégorie                    | Exp 13  | Baseline |
+| ---------------------------- | ------- | -------- |
+| longterm_with_amulet_hard    | 100.00% | 86.67%   |
+| longterm_without_amulet_hard | 99.60%  | 44.24%   |
+| order_trap_die_hard          | 95.83%  | 81.88%   |
+| order_trap_survive_hard      | 91.46%  | 81.25%   |
+| hard                         | 97.41%  | 93.33%   |
+| normal_short                 | 97.33%  | 91.78%   |
+
+**Observations :**
+
+- RECORD FINAL : 97.30% avec 106K paramètres
+- `longterm_without_amulet_hard` : 99.60% (vs 44.24% baseline = +55.36%)
+- Gap quasi nul (0.06%)
+
+---
+
+## Résumé Final
+
+| Rang | Expérience                       | Val Acc | Paramètres |
+| ---- | -------------------------------- | ------- | ---------- |
+| 1    | Exp 13 (LSTM Bi, dropout 0.1)    | 97.30%  | 106,226    |
+| 2    | Exp 12 (LSTM Bi, dropout 0.2)    | 97.07%  | 106,226    |
+| 3    | Exp 11 (LSTM Bi, sans scheduler) | 95.77%  | 106,226    |
+| 4    | Exp 10 (MLP, dropout 0.1)        | 90.43%  | 82,369     |
+| 5    | Baseline                         | 80.03%  | 9,397,909  |
+
+**Meilleure commande :**
+
+```bash
+uv run train_dungeon_logs.py --mode lstm --embed_dim 24 --hidden_dim 24 --num_layers 2 --dropout 0.1 --bidirectional --weight_decay 0.001 --optimizer sgd --learning_rate 0.1 --epochs 50 --use_scheduler --early_stopping --patience 10
+```
+
+### Explication des paramètres
+
+| Paramètre          | Valeur | Description                                                                                                                                 |
+| ------------------ | ------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--mode lstm`      | lstm   | Utilise un **LSTM** (Long Short-Term Memory) au lieu d'un MLP. Capture les dépendances séquentielles (crucial pour les patterns "longterm") |
+| `--embed_dim`      | 24     | Dimension des vecteurs d'embedding. Chaque token est représenté par un vecteur de 24 dimensions                                             |
+| `--hidden_dim`     | 24     | Taille de l'état caché du LSTM (sa "mémoire" interne)                                                                                       |
+| `--num_layers`     | 2      | Nombre de couches LSTM empilées. 2 couches permettent de capturer des patterns plus complexes                                               |
+| `--dropout`        | 0.1    | 10% de dropout entre les couches LSTM. Régularisation légère pour éviter l'overfitting                                                      |
+| `--bidirectional`  | True   | LSTM **bidirectionnel** : lit la séquence dans les 2 sens (avant→arrière ET arrière→avant) pour un meilleur contexte                        |
+| `--weight_decay`   | 0.001  | Régularisation **L2** : pénalise les poids trop grands. Clé pour réduire le gap train/val (15.64% → 0.06%)                                  |
+| `--optimizer sgd`  | sgd    | **SGD avec momentum 0.9** (pas Adam). SGD fonctionne mieux ici avec un LR élevé                                                             |
+| `--learning_rate`  | 0.1    | Taux d'apprentissage élevé (fonctionne bien avec SGD + weight_decay)                                                                        |
+| `--epochs`         | 50     | Maximum 50 epochs d'entraînement                                                                                                            |
+| `--use_scheduler`  | True   | Active **ReduceLROnPlateau** : divise le LR par 2 si pas d'amélioration pendant 5 epochs                                                    |
+| `--early_stopping` | True   | Arrête l'entraînement si le modèle ne s'améliore plus                                                                                       |
+| `--patience`       | 10     | Attend 10 epochs sans amélioration avant d'arrêter                                                                                          |
+
+**Amélioration totale : +17.27% accuracy, -99% paramètres**
