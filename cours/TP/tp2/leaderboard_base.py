@@ -213,9 +213,9 @@ class LeaderboardDB:
         df = pd.read_sql_query(
             f"""
             SELECT team_name as "Equipe",
-                   ROUND(val_accuracy * 100, 2) as "Val Acc (%)",
-                   ROUND(test_accuracy * 100, 2) as "Test Secret (%)",
-                   ROUND((val_accuracy - test_accuracy) * 100, 2) as "Gap (%)",
+                   ROUND(val_accuracy * 100, 5) as "Val Acc (%)",
+                   ROUND(test_accuracy * 100, 5) as "Test Secret (%)",
+                   ROUND((val_accuracy - test_accuracy) * 100, 5) as "Gap (%)",
                    n_params as "Params",
                    submitted_at as "Soumis le"
             FROM {self.table_name}
@@ -260,6 +260,7 @@ class LeaderboardDB:
         # 3. Filtrage : On ne garde que la meilleure soumission par équipe (selon l'efficacité)
         df = df.sort_values('efficiency_score', ascending=False)
         df = df.drop_duplicates(subset=['team_name'], keep='first')
+        df = df.reset_index(drop=True)
 
         # 4. Mise en forme pour l'affichage (Cosmétique uniquement)
         # On crée un nouveau DataFrame propre pour l'affichage final
@@ -539,7 +540,7 @@ class LeaderboardApp:
                             gr.Markdown("#### Meilleur Ratio Accuracy/Taille")
                             leaderboard_efficient_table = gr.Dataframe(
                                     value=self.db.get_leaderboard_efficient(),
-                                    label="Classement par efficacite (accuracy / params)",
+                                    label="Classement par efficacite (accuracy / log10(params))",
                                     interactive=False,
                                     wrap=True
                                     )
