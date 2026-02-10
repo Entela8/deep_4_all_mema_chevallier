@@ -173,7 +173,7 @@ Implémentez une fonction qui :
 
 ## Phase 4 : Implémentation du Divergence-Aware Sampling (DAS)
 
-[Code simple de demo](simple_dasd.py)
+Une implémentation de l'algo expliquer dans le papier scientifique [implementation_dasd.py](implementation_dasd.py)
 
 ### Concept Révisé
 
