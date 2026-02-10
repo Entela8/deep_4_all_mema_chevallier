@@ -131,33 +131,192 @@ class DASPipelineQwen:
             "logprobs":      valid_logprobs.tolist()
             }
 
-    def decide_keep_prompt(self, teacher_answer, student_answer):
-        teacher_logprob = teacher_answer.get("mean_logprob", 0.0)
-        student_logprob = student_answer.get("mean_logprob", 0.0)
+    # ----------------------------------------------------------------
+    # PHASE 4 : Décision DAS
+    # ----------------------------------------------------------------
 
-        print(teacher_logprob, student_logprob)
+    def decide_keep_prompt(self, teacher_answer, student_answer, threshold=0.1):
+        """
+        Décide si un exemple doit être conservé pour l'entraînement.
 
-        divergence = teacher_logprob - student_logprob
+        Logique DAS (niveau réponse) :
+          divergence = P_teacher - P_student   (probabilités moyennes géométriques)
 
-        print(divergence)
+          divergence > threshold  → TEACHER_SENTENCE → GARDER
+          |divergence| <= threshold → SHARED_SENTENCE → NEUTRE (garder aussi)
+          divergence < -threshold → STUDENT_SENTENCE → REJETER
+
+        Retourne un dict avec le score et la décision.
+        """
+        teacher_prob = teacher_answer.get("mean_logprob", 0.0)
+        student_prob = student_answer.get("mean_logprob", 0.0)
+        divergence = teacher_prob - student_prob
+
+        if divergence > threshold:
+            label = "TEACHER_SENTENCE"
+            keep = True
+        elif divergence < -threshold:
+            label = "STUDENT_SENTENCE"
+            keep = False
+        else:
+            label = "SHARED_SENTENCE"
+            keep = True
+
+        return {
+            "keep":         keep,
+            "label":        label,
+            "divergence":   divergence,
+            "teacher_prob": teacher_prob,
+            "student_prob": student_prob,
+        }
+
+    # ----------------------------------------------------------------
+    # PHASE 4 : Filtrage d'un dataset complet
+    # ----------------------------------------------------------------
+
+    def filter_dataset(self, input_path, output_dir, stage, threshold=0.1):
+        """
+        Traite tous les exemples d'un fichier stage*_raw.json et filtre
+        selon le score DAS.
+
+        Produit :
+          - stage{N}_filtered_raw.json      : exemples conservés (avec scores)
+          - stage{N}_filtered_llamafactory.json : format prêt pour LLaMA-Factory
+          - stage{N}_das_scores.png         : histogramme des divergences
+        """
+        import json
+        import matplotlib.pyplot as plt
+        from pathlib import Path
+
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Chargement des données générées (Phase 3)
+        with open(input_path, "r", encoding="utf-8") as f:
+            examples = json.load(f)
+
+        print(f"\n{'='*55}")
+        print(f"FILTRAGE DAS - Stage {stage}")
+        print(f"Exemples à traiter : {len(examples)}")
+        print(f"Seuil de divergence : {threshold}")
+        print(f"{'='*55}")
+
+        filtered_raw = []
+        llamafactory_data = []
+        all_scores = []
+
+        for i, ex in enumerate(examples):
+            instruction = ex["instruction"]
+            response    = ex["response"]
+            artist      = ex.get("artist_name", "Unknown")
+            print(f"[{i+1}/{len(examples)}] {artist[:30]:<30}", end=" ")
+
+            try:
+                # Calcul des logprobs student sur la réponse du teacher
+                student_answer = self.get_student_logprobs(instruction, response)
+
+                # Les logprobs du teacher sont déjà dans le fichier (Phase 3)
+                teacher_logprobs = ex.get("logprobs", [])
+                teacher_probs    = [lp["logprob"] for lp in teacher_logprobs]
+                teacher_mean_prob = float(np.exp(np.mean(teacher_probs))) if teacher_probs else 0.0
+
+                teacher_answer = {
+                    "mean_logprob": teacher_mean_prob,
+                    "content":      response,
+                }
+
+                # Décision DAS
+                decision = self.decide_keep_prompt(teacher_answer, student_answer, threshold)
+                all_scores.append(decision["divergence"])
+
+                status = "KEEP  " if decision["keep"] else "SKIP  "
+                print(f"{status} | div={decision['divergence']:+.4f} | {decision['label']}")
+
+                if decision["keep"]:
+                    # Données complètes avec scores (pour analyse)
+                    filtered_raw.append({
+                        **ex,
+                        "das_divergence":   decision["divergence"],
+                        "das_label":        decision["label"],
+                        "das_teacher_prob": decision["teacher_prob"],
+                        "das_student_prob": decision["student_prob"],
+                    })
+
+                    # Format ShareGPT pour LLaMA-Factory
+                    llamafactory_data.append({
+                        "conversations": [
+                            {"from": "human", "value": instruction},
+                            {"from": "gpt",   "value": response},
+                        ]
+                    })
+
+            except Exception as e:
+                print(f"ERREUR : {e}")
+                continue
+
+        # ── Sauvegarde des résultats ──────────────────────────────────
+        raw_out   = output_dir / f"stage{stage}_filtered_raw.json"
+        lmf_out   = output_dir / f"stage{stage}_filtered_llamafactory.json"
+        plot_out  = output_dir / f"stage{stage}_das_scores.png"
+
+        with open(raw_out, "w", encoding="utf-8") as f:
+            json.dump(filtered_raw, f, ensure_ascii=False, indent=2)
+
+        with open(lmf_out, "w", encoding="utf-8") as f:
+            json.dump(llamafactory_data, f, ensure_ascii=False, indent=2)
+
+        # ── Histogramme des scores DAS ────────────────────────────────
+        if all_scores:
+            fig, ax = plt.subplots(figsize=(9, 5))
+            ax.hist(all_scores, bins=30, color="steelblue", edgecolor="white", alpha=0.85)
+            ax.axvline(x= threshold, color="green",  linestyle="--", linewidth=1.5,
+                       label=f"Seuil KEEP (+{threshold})")
+            ax.axvline(x=-threshold, color="red",    linestyle="--", linewidth=1.5,
+                       label=f"Seuil REJECT (-{threshold})")
+            ax.axvline(x=0,          color="orange", linestyle=":",  linewidth=1.2,
+                       label="Divergence = 0")
+            ax.set_xlabel("Divergence (P_teacher − P_student)", fontsize=12)
+            ax.set_ylabel("Nombre d'exemples", fontsize=12)
+            ax.set_title(f"Distribution DAS — Stage {stage}", fontsize=14)
+            ax.legend()
+            fig.tight_layout()
+            fig.savefig(plot_out, dpi=150)
+            plt.close(fig)
+
+        # ── Récapitulatif ─────────────────────────────────────────────
+        n_kept     = len(filtered_raw)
+        n_total    = len(examples)
+        keep_rate  = 100 * n_kept / n_total if n_total else 0
+        mean_div   = float(np.mean(all_scores)) if all_scores else 0.0
+
+        print(f"\n── Résultats Stage {stage} ──────────────────────────────")
+        print(f"  Conservés  : {n_kept}/{n_total} ({keep_rate:.1f}%)")
+        print(f"  Rejetés    : {n_total - n_kept}/{n_total}")
+        print(f"  Divergence moyenne : {mean_div:+.4f}")
+        print(f"  → {raw_out}")
+        print(f"  → {lmf_out}")
+        print(f"  → {plot_out}")
+
+        return filtered_raw
+
+    # ----------------------------------------------------------------
+    # run() : traitement d'un seul prompt (inchangé + décision complète)
+    # ----------------------------------------------------------------
 
     def run(self, prompt):
-        print(f"Traitement du prompt : '{prompt}'")
+        print(f"Traitement du prompt : '{prompt[:60]}...'")
 
-        # 1. Teacher
         teacher_answer = self.get_teacher_data(prompt)
         if not teacher_answer:
-            return
+            return None
 
-        print(f"Réponse Teacher reçue ({len(teacher_answer["content"])} chars).")
+        print(f"Réponse Teacher reçue ({len(teacher_answer['content'])} chars).")
 
-        # 2. Student & Calculs
         try:
             student_answer = self.get_student_logprobs(prompt, teacher_answer["content"])
-
-            # 3. Décision
-            return self.decide_keep_prompt(teacher_answer, student_answer)
-
+            decision = self.decide_keep_prompt(teacher_answer, student_answer)
+            print(f"Décision : {decision['label']} | divergence={decision['divergence']:+.4f} | keep={decision['keep']}")
+            return decision
         except Exception as e:
             print(f"Erreur durant le calcul DAS : {e}")
             import traceback
@@ -165,16 +324,38 @@ class DASPipelineQwen:
             return None
 
 
-# --- MAIN EXECUTION ---
+# ====================================================================
+# MAIN EXECUTION — Phase 4 : filtrage du dataset généré
+# ====================================================================
 if __name__ == "__main__":
-    # Clé API
-    API_KEY = "token here"
+    from pathlib import Path
 
-    # ID Modèle Étudiant (Compatible 4-bit unsloth/bnb)
+    API_KEY    = "nKuJabWS1epvq3x-m8by6NOU4xP4_znNL9OhmgXBPz9OeWOHlyGJIENnG8oXLT-4oOXNmESqExEMZv6o"
     STUDENT_ID = "unsloth/Qwen3-4B-Instruct-2507-unsloth-bnb-4bit"
 
+    # Dossier contenant les fichiers stage*_raw.json générés en Phase 3
+    DATA_DIR   = Path(__file__).parent.parent / "tp4" / "data"
+    OUTPUT_DIR = Path(__file__).parent / "data_filtered"
+
+    DAS_THRESHOLD = 0.1  # Seuil de divergence pour KEEP / REJECT
+
+    # Chargement unique du pipeline (student model + API)
     pipeline = DASPipelineQwen(openai_api_key=API_KEY, student_model_id=STUDENT_ID)
 
-    # Test
-    test_prompt = "Explique le principe de la supraconductivité de manière simple."
-    result = pipeline.run(test_prompt)
+    # Filtrage Stage 1 et Stage 2
+    for stage in [1, 2]:
+        raw_file = DATA_DIR / f"stage{stage}_raw.json"
+        if not raw_file.exists():
+            print(f"[ATTENTION] Fichier introuvable : {raw_file}")
+            print("  → Lancez d'abord generate_dataset.py (Phase 3)")
+            continue
+
+        pipeline.filter_dataset(
+            input_path=raw_file,
+            output_dir=OUTPUT_DIR,
+            stage=stage,
+            threshold=DAS_THRESHOLD,
+        )
+
+    print("\nPhase 4 terminée.")
+    print(f"Fichiers prêts pour LLaMA-Factory dans : {OUTPUT_DIR}")
