@@ -1,0 +1,4 @@
+saves/
+data_filtered/
+__pycache__/
+*.pyc

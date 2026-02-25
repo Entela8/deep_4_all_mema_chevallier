@@ -1,7 +1,10 @@
+import sys
 import numpy as np
 import torch
 from openai import OpenAI
 from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
+
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 
 class DASPipelineQwen:
@@ -105,7 +108,7 @@ class DASPipelineQwen:
 
             # Shift des logits et labels pour la prédiction "next token"
             # logits[t] prédit labels[t+1]
-            shift_logits = logits[..., :-1, :].contiguous()
+            shift_logits = logits[..., :-1, :].contiguous().float()
             shift_labels = labels[..., 1:].contiguous()
 
             # reduction='none' nous donne la perte pour chaque token individuel
@@ -122,10 +125,10 @@ class DASPipelineQwen:
 
         # Calcul des statistiques DAS
         total_logprob = np.sum(valid_logprobs)
-        mean_logprob = np.exp(np.mean(valid_logprobs)) if len(valid_logprobs) > 0 else 0.0
+        mean_logprob = float(np.exp(np.mean(valid_logprobs))) if len(valid_logprobs) > 0 else 0.0
 
         return {
-            "total_logprob": total_logprob,
+            "total_logprob": float(total_logprob),
             "mean_logprob":  mean_logprob,
             "num_tokens":    len(valid_logprobs),
             "logprobs":      valid_logprobs.tolist()
@@ -174,10 +177,13 @@ class DASPipelineQwen:
     # PHASE 4 : Filtrage d'un dataset complet
     # ----------------------------------------------------------------
 
-    def filter_dataset(self, input_path, output_dir, stage, threshold=0.1):
+    def filter_dataset(self, input_path, output_dir, stage, threshold=0.1, keep_ratio=None):
         """
         Traite tous les exemples d'un fichier stage*_raw.json et filtre
         selon le score DAS.
+
+        keep_ratio : si fourni (ex: 0.6), garde le top keep_ratio% par divergence
+                     (ignore threshold). Sinon, filtre par seuil fixe.
 
         Produit :
           - stage{N}_filtered_raw.json      : exemples conservés (avec scores)
@@ -198,13 +204,14 @@ class DASPipelineQwen:
         print(f"\n{'='*55}")
         print(f"FILTRAGE DAS - Stage {stage}")
         print(f"Exemples à traiter : {len(examples)}")
-        print(f"Seuil de divergence : {threshold}")
+        if keep_ratio is not None:
+            print(f"Mode : top {int(keep_ratio*100)}% par divergence")
+        else:
+            print(f"Seuil de divergence : {threshold}")
         print(f"{'='*55}")
 
-        filtered_raw = []
-        llamafactory_data = []
-        all_scores = []
-
+        # ── Passe 1 : calcul de tous les scores ───────────────────────
+        scored = []
         for i, ex in enumerate(examples):
             instruction = ex["instruction"]
             response    = ex["response"]
@@ -212,47 +219,51 @@ class DASPipelineQwen:
             print(f"[{i+1}/{len(examples)}] {artist[:30]:<30}", end=" ")
 
             try:
-                # Calcul des logprobs student sur la réponse du teacher
                 student_answer = self.get_student_logprobs(instruction, response)
 
-                # Les logprobs du teacher sont déjà dans le fichier (Phase 3)
-                teacher_logprobs = ex.get("logprobs", [])
-                teacher_probs    = [lp["logprob"] for lp in teacher_logprobs]
+                teacher_logprobs  = ex.get("logprobs", [])
+                teacher_probs     = [lp["logprob"] for lp in teacher_logprobs]
                 teacher_mean_prob = float(np.exp(np.mean(teacher_probs))) if teacher_probs else 0.0
 
-                teacher_answer = {
-                    "mean_logprob": teacher_mean_prob,
-                    "content":      response,
-                }
-
-                # Décision DAS
+                teacher_answer = {"mean_logprob": teacher_mean_prob, "content": response}
                 decision = self.decide_keep_prompt(teacher_answer, student_answer, threshold)
-                all_scores.append(decision["divergence"])
 
-                status = "KEEP  " if decision["keep"] else "SKIP  "
-                print(f"{status} | div={decision['divergence']:+.4f} | {decision['label']}")
-
-                if decision["keep"]:
-                    # Données complètes avec scores (pour analyse)
-                    filtered_raw.append({
-                        **ex,
-                        "das_divergence":   decision["divergence"],
-                        "das_label":        decision["label"],
-                        "das_teacher_prob": decision["teacher_prob"],
-                        "das_student_prob": decision["student_prob"],
-                    })
-
-                    # Format ShareGPT pour LLaMA-Factory
-                    llamafactory_data.append({
-                        "conversations": [
-                            {"from": "human", "value": instruction},
-                            {"from": "gpt",   "value": response},
-                        ]
-                    })
+                print(f"div={decision['divergence']:+.4f}")
+                scored.append((ex, decision))
 
             except Exception as e:
                 print(f"ERREUR : {e}")
-                continue
+
+        all_scores = [d["divergence"] for _, d in scored]
+
+        # ── Passe 2 : sélection ───────────────────────────────────────
+        if keep_ratio is not None:
+            # Top keep_ratio% par divergence décroissante
+            n_keep = max(1, int(len(scored) * keep_ratio))
+            scored_sorted = sorted(scored, key=lambda x: x[1]["divergence"], reverse=True)
+            kept = scored_sorted[:n_keep]
+            # Seuil effectif = divergence du dernier exemple conservé
+            effective_threshold = kept[-1][1]["divergence"] if kept else 0.0
+        else:
+            kept = [(ex, d) for ex, d in scored if d["keep"]]
+            effective_threshold = threshold
+
+        filtered_raw    = []
+        llamafactory_data = []
+        for ex, decision in kept:
+            filtered_raw.append({
+                **ex,
+                "das_divergence":   decision["divergence"],
+                "das_label":        decision["label"],
+                "das_teacher_prob": decision["teacher_prob"],
+                "das_student_prob": decision["student_prob"],
+            })
+            llamafactory_data.append({
+                "conversations": [
+                    {"from": "human", "value": ex["instruction"]},
+                    {"from": "gpt",   "value": ex["response"]},
+                ]
+            })
 
         # ── Sauvegarde des résultats ──────────────────────────────────
         raw_out   = output_dir / f"stage{stage}_filtered_raw.json"
@@ -269,33 +280,31 @@ class DASPipelineQwen:
         if all_scores:
             fig, ax = plt.subplots(figsize=(9, 5))
             ax.hist(all_scores, bins=30, color="steelblue", edgecolor="white", alpha=0.85)
-            ax.axvline(x= threshold, color="green",  linestyle="--", linewidth=1.5,
-                       label=f"Seuil KEEP (+{threshold})")
-            ax.axvline(x=-threshold, color="red",    linestyle="--", linewidth=1.5,
-                       label=f"Seuil REJECT (-{threshold})")
-            ax.axvline(x=0,          color="orange", linestyle=":",  linewidth=1.2,
-                       label="Divergence = 0")
-            ax.set_xlabel("Divergence (P_teacher − P_student)", fontsize=12)
+            ax.axvline(x=effective_threshold, color="green", linestyle="--", linewidth=1.5,
+                       label=f"Seuil effectif ({effective_threshold:+.3f})")
+            ax.axvline(x=0, color="orange", linestyle=":", linewidth=1.2, label="Divergence = 0")
+            ax.set_xlabel("Divergence (P_teacher - P_student)", fontsize=12)
             ax.set_ylabel("Nombre d'exemples", fontsize=12)
-            ax.set_title(f"Distribution DAS — Stage {stage}", fontsize=14)
+            ax.set_title(f"Distribution DAS - Stage {stage}", fontsize=14)
             ax.legend()
             fig.tight_layout()
             fig.savefig(plot_out, dpi=150)
             plt.close(fig)
 
         # ── Récapitulatif ─────────────────────────────────────────────
-        n_kept     = len(filtered_raw)
-        n_total    = len(examples)
-        keep_rate  = 100 * n_kept / n_total if n_total else 0
-        mean_div   = float(np.mean(all_scores)) if all_scores else 0.0
+        n_kept    = len(filtered_raw)
+        n_total   = len(examples)
+        keep_rate = 100 * n_kept / n_total if n_total else 0
+        mean_div  = float(np.mean(all_scores)) if all_scores else 0.0
 
-        print(f"\n── Résultats Stage {stage} ──────────────────────────────")
-        print(f"  Conservés  : {n_kept}/{n_total} ({keep_rate:.1f}%)")
-        print(f"  Rejetés    : {n_total - n_kept}/{n_total}")
+        print(f"\n-- Resultats Stage {stage} --")
+        print(f"  Conserves  : {n_kept}/{n_total} ({keep_rate:.1f}%)")
+        print(f"  Rejetes    : {n_total - n_kept}/{n_total}")
         print(f"  Divergence moyenne : {mean_div:+.4f}")
-        print(f"  → {raw_out}")
-        print(f"  → {lmf_out}")
-        print(f"  → {plot_out}")
+        print(f"  Seuil effectif     : {effective_threshold:+.4f}")
+        print(f"  -> {raw_out}")
+        print(f"  -> {lmf_out}")
+        print(f"  -> {plot_out}")
 
         return filtered_raw
 
@@ -337,7 +346,8 @@ if __name__ == "__main__":
     DATA_DIR   = Path(__file__).parent.parent / "tp4" / "data"
     OUTPUT_DIR = Path(__file__).parent / "data_filtered"
 
-    DAS_THRESHOLD = 0.1  # Seuil de divergence pour KEEP / REJECT
+    DAS_THRESHOLD = 0.1   # Seuil fixe (utilisé si keep_ratio=None)
+    KEEP_RATIO    = 0.6   # Garder le top 60% par divergence
 
     # Chargement unique du pipeline (student model + API)
     pipeline = DASPipelineQwen(openai_api_key=API_KEY, student_model_id=STUDENT_ID)
@@ -355,6 +365,7 @@ if __name__ == "__main__":
             output_dir=OUTPUT_DIR,
             stage=stage,
             threshold=DAS_THRESHOLD,
+            keep_ratio=KEEP_RATIO,
         )
 
     print("\nPhase 4 terminée.")
